@@ -12,11 +12,11 @@
     "react-dom": "18.2.0",
     "next": "13.5.4",
     "@supabase/supabase-js": "^2.24.0",
-    "@solana/wallet-adapter-base": "^0.9.19",
-    "@solana/wallet-adapter-react": "^0.20.11",
-    "@solana/wallet-adapter-react-ui": "^0.11.10",
-    "@solana/wallet-adapter-wallets": "^0.20.11",
-    "@solana/wallet-adapter-phantom": "^0.20.11",
-    "@solana/web3.js": "^1.70.0"
+    "@solana/wallet-adapter-base": "^0.9.23",
+    "@solana/wallet-adapter-react": "^0.15.32",
+    "@solana/wallet-adapter-react-ui": "^0.9.33",
+    "@solana/wallet-adapter-wallets": "^0.19.17",
+    "@solana/wallet-adapter-phantom": "^0.9.24",
+    "@solana/web3.js": "^1.95.3"
   }
 }
