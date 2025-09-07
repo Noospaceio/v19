@@ -1,0 +1,22 @@
+{
+  "name": "noospace-proto-final",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000"
+  },
+  "dependencies": {
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "next": "13.5.4",
+    "@supabase/supabase-js": "^2.24.0",
+    "@solana/wallet-adapter-base": "^0.9.19",
+    "@solana/wallet-adapter-react": "^0.20.11",
+    "@solana/wallet-adapter-react-ui": "^0.11.10",
+    "@solana/wallet-adapter-wallets": "^0.20.11",
+    "@solana/wallet-adapter-phantom": "^0.20.11",
+    "@solana/web3.js": "^1.70.0"
+  }
+}
