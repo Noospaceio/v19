@@ -143,17 +143,24 @@ export default function NooSpace() {
     setText('');
   }
 
-  async function harvestNowMock() {
+  async function harvestNow() {
     if (!wallet) return alert('Connect wallet to harvest your spores.');
     try {
-      const res = await fetch('/api/harvest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wallet }) });
+      const res = await fetch('/functions/v1/harvest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wallet }),
+      });
       const data = await res.json();
       if (data?.ok) {
         setBalance(await fetchBalance(wallet));
         setUnclaimed(0);
-        alert('Harvest processed (mock).');
+        setFarmedTotal(0); // reset after harvest
+        alert(`Harvest successful! You gained ${data.harvested} NOO.`);
       } else alert('Harvest failed: ' + (data?.error || 'unknown'));
-    } catch (e) { alert('Harvest request failed (network).'); }
+    } catch (e) {
+      alert('Harvest request failed (network).');
+    }
   }
 
   const daysLeft = useMemo(() => formatDaysLeft(startTs), [startTs, entries]);
@@ -197,7 +204,7 @@ export default function NooSpace() {
               <div>Your spores are germinating. Harvest in <strong>{daysLeft}</strong> dawns.</div>
               <div>Unclaimed seeds: <strong>{unclaimed}</strong></div>
               <div className="harvest-actions">
-                <button onClick={harvestNowMock} disabled={!wallet}>Request Harvest (mock)</button>
+                <button onClick={harvestNow} disabled={!wallet}>Request Harvest</button>
               </div>
               <div className="airdrop-note">Genesis spore balance (per user): {AIRDROP_PER_USER} NOO</div>
             </div>
@@ -239,4 +246,5 @@ export default function NooSpace() {
     </div>
   );
 }
+
 
