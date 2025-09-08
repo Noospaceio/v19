@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { useConnection, useWallet } from '@solana/wallet-adapter-react'
+import { useWallet } from '@solana/wallet-adapter-react'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 
 const DAILY_LIMIT = 3
@@ -16,76 +16,58 @@ function formatDaysLeft(startTs) {
 
 // --- Backend helpers ---
 async function savePostToBackend(wallet, entry) {
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('posts')
-        .insert([{ owner: wallet || null, ...entry }])
-      if (error) throw error
-      return data[0]
-    } catch (e) {
-      console.warn('Supabase insert failed', e)
-    }
+  try {
+    const { data, error } = await supabase
+      .from('posts')
+      .insert([{ owner: wallet || null, ...entry }])
+    if (error) throw error
+    return data[0]
+  } catch (e) {
+    console.warn('Supabase insert failed', e)
   }
-  // LocalStorage fallback nur für Gäste
-  const list = JSON.parse(localStorage.getItem('noo_posts') || '[]')
-  list.unshift({ wallet, ...entry })
-  localStorage.setItem('noo_posts', JSON.stringify(list.slice(0, 200)))
-  return entry
 }
 
 async function fetchPostsFromBackend() {
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('posts')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(200)
-      if (error) throw error
-      return data
-    } catch (e) {
-      console.warn('Supabase fetch failed', e)
-    }
+  try {
+    const { data, error } = await supabase
+      .from('posts')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200)
+    if (error) throw error
+    return data
+  } catch (e) {
+    console.warn('Supabase fetch failed', e)
+    return []
   }
-  return JSON.parse(localStorage.getItem('noo_posts') || '[]')
 }
 
 async function addOrUpdateBalance(wallet, delta) {
   if (!wallet) return
-  if (supabase) {
-    try {
-      const { data: existing } = await supabase.from('balances').select('*').eq('wallet', wallet).single()
-      if (existing) {
-        const newBal = (existing.balance || 0) + delta
-        await supabase.from('balances').update({ balance: newBal }).eq('wallet', wallet)
-        return { wallet, balance: newBal }
-      } else {
-        await supabase.from('balances').insert({ wallet, balance: delta })
-        return { wallet, balance: delta }
-      }
-    } catch (e) {
-      console.warn('Supabase upsert balance failed', e)
+  try {
+    const { data: existing } = await supabase.from('balances').select('*').eq('wallet', wallet).single()
+    if (existing) {
+      const newBal = (existing.balance || 0) + delta
+      await supabase.from('balances').update({ balance: newBal }).eq('wallet', wallet)
+      return { wallet, balance: newBal }
+    } else {
+      await supabase.from('balances').insert({ wallet, balance: delta })
+      return { wallet, balance: delta }
     }
+  } catch (e) {
+    console.warn('Supabase upsert balance failed', e)
   }
-  const balKey = 'noo_bal_' + wallet
-  const cur = parseInt(localStorage.getItem(balKey) || '0', 10)
-  localStorage.setItem(balKey, String(cur + delta))
-  return { wallet, balance: cur + delta }
 }
 
 async function fetchBalance(wallet) {
   if (!wallet) return 0
-  if (supabase) {
-    try {
-      const { data } = await supabase.from('balances').select('balance').eq('wallet', wallet).single()
-      if (data && data.balance != null) return data.balance
-    } catch (e) {
-      console.warn('Supabase fetch balance failed', e)
-    }
+  try {
+    const { data } = await supabase.from('balances').select('balance').eq('wallet', wallet).single()
+    if (data && data.balance != null) return data.balance
+  } catch (e) {
+    console.warn('Supabase fetch balance failed', e)
   }
-  const cur = parseInt(localStorage.getItem('noo_bal_' + wallet) || '0', 10)
-  return cur
+  return 0
 }
 
 // --- React component ---
@@ -113,7 +95,7 @@ export default function NooSpace() {
     fetchPostsFromBackend().then(setEntries)
     setUsedToday(parseInt(localStorage.getItem('noo_used') || '0', 10))
     if (wallet) {
-      fetchBalance(wallet).then(b => setBalance(b))
+      fetchBalance(wallet).then(setBalance)
       // unclaimed seeds
       supabase.from('unclaimed').select('amount').eq('wallet', wallet).single()
         .then(res => { if (res?.data) setUnclaimed(res.data.amount || 0) })
@@ -143,10 +125,8 @@ export default function NooSpace() {
       await supabase.from('unclaimed').upsert({ wallet, amount: reward }, { onConflict: ['wallet'] }).catch(() => {})
       setUnclaimed(prev => prev + reward)
       setFarmedTotal(prev => prev + reward)
-    } else {
-      const cur = parseInt(localStorage.getItem('noo_shadow') || '0', 10)
-      localStorage.setItem('noo_shadow', String(cur + reward))
     }
+
     setText('')
   }
 
@@ -190,12 +170,12 @@ export default function NooSpace() {
           </div>
 
           <div className="composer">
-            <textarea value={text} onChange={e => setText(e.target.value.slice(0, MAX_CHARS))} placeholder={guest ? "Guest shadow mode: post but connect to harvest later." : "Share a short resonant thought... (max 240 chars)"} rows={3} />
+            <textarea value={text} onChange={e => setText(e.target.value.slice(0, MAX_CHARS))} placeholder={guest ? "Guest mode: post and see everything." : "Share a short resonant thought... (max 240 chars)"} rows={3} />
             <div className="composer-row">
               <label className="mantra"><input type="checkbox" checked={mantra} onChange={() => setMantra(!mantra)} /> Speak with intent (mantra)</label>
               <div className="controls">
                 <div className="chars">{text.length}/{MAX_CHARS}</div>
-                <button className="post-btn" onClick={post} disabled={usedToday >= DAILY_LIMIT}>{guest ? 'Post (Guest Shadow)' : 'Post & Seed'}</button>
+                <button className="post-btn" onClick={post} disabled={usedToday >= DAILY_LIMIT}>Post & Seed</button>
               </div>
             </div>
 
