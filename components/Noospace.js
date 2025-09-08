@@ -50,7 +50,6 @@ async function fetchBalance(wallet) {
     const { data } = await supabase.from('balances').select('balance').eq('wallet', wallet).single();
     return data?.balance ?? 0;
   } catch (e) {
-    console.warn('Supabase fetch balance failed', e);
     return 0;
   }
 }
@@ -63,7 +62,6 @@ async function addOrUpdateBalance(wallet, delta) {
     await supabase.from('balances').upsert({ wallet, balance: newBalance }, { onConflict: ['wallet'] });
     return newBalance;
   } catch (e) {
-    console.warn('Supabase upsert balance failed', e);
     return 0;
   }
 }
@@ -76,7 +74,35 @@ async function addOrUpdateUnclaimed(wallet, delta) {
     await supabase.from('unclaimed').upsert({ wallet, amount: newAmount }, { onConflict: ['wallet'] });
     return newAmount;
   } catch (e) {
-    console.warn('Supabase upsert unclaimed failed', e);
+    return 0;
+  }
+}
+
+// --- Daily usage helpers ---
+async function fetchUsedToday(wallet) {
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const { data } = await supabase.from('daily_usage').select('*').eq('wallet', wallet).single();
+    if (!data) return 0;
+    return data.last_post_date === today ? data.used_count : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function incrementUsedToday(wallet) {
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const { data } = await supabase.from('daily_usage').select('*').eq('wallet', wallet).single();
+    if (!data || data.last_post_date !== today) {
+      await supabase.from('daily_usage').upsert({ wallet, used_count: 1, last_post_date: today }, { onConflict: ['wallet'] });
+      return 1;
+    } else {
+      const newCount = data.used_count + 1;
+      await supabase.from('daily_usage').update({ used_count: newCount }).eq('wallet', wallet);
+      return newCount;
+    }
+  } catch {
     return 0;
   }
 }
@@ -104,23 +130,22 @@ export default function NooSpace() {
 
   useEffect(() => {
     fetchPostsFromBackend().then(setEntries);
-    setUsedToday(parseInt(localStorage.getItem('noo_used') || '0', 10));
-
     if (wallet) {
+      fetchUsedToday(wallet).then(setUsedToday);
       fetchBalance(wallet).then(setBalance);
-
       supabase.from('unclaimed').select('amount').eq('wallet', wallet).single()
         .then(res => setUnclaimed(res.data?.amount || 0))
         .catch(() => setUnclaimed(0));
-
       supabase.from('posts').select('reward').eq('owner', wallet)
         .then(r => setFarmedTotal((r.data || []).reduce((s, p) => s + (p.reward || 0), 0)))
         .catch(() => {});
+    } else {
+      setUsedToday(parseInt(localStorage.getItem('noo_used') || '0', 10));
     }
   }, [wallet]);
 
   async function post() {
-    if (usedToday >= DAILY_LIMIT) return alert("You have used today's orbs.");
+    if (!guest && usedToday >= DAILY_LIMIT) return alert("You have used today's orbs.");
     if (!text.trim()) return;
 
     const base = 5;
@@ -132,14 +157,17 @@ export default function NooSpace() {
     if (!saved) return alert('Failed to save post.');
 
     setEntries(prev => [saved, ...prev].slice(0, 200));
-    setUsedToday(prev => { localStorage.setItem('noo_used', String(prev + 1)); return prev + 1; });
 
-    if (wallet) {
+    if (!guest) {
+      const newCount = await incrementUsedToday(wallet);
+      setUsedToday(newCount);
       const newUnclaimed = await addOrUpdateUnclaimed(wallet, reward);
       setUnclaimed(newUnclaimed);
       const newBalance = await addOrUpdateBalance(wallet, reward);
       setBalance(newBalance);
       setFarmedTotal(prev => prev + reward);
+    } else {
+      setUsedToday(prev => { localStorage.setItem('noo_used', String(prev + 1)); return prev + 1; });
     }
 
     setText('');
@@ -160,7 +188,7 @@ export default function NooSpace() {
         setFarmedTotal(0);
         alert(`Harvest successful! You gained ${data.harvested} NOO.`);
       } else alert('Harvest failed: ' + (data?.error || 'unknown'));
-    } catch (e) {
+    } catch {
       alert('Harvest request failed (network).');
     }
   }
