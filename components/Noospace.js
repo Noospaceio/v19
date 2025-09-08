@@ -19,11 +19,13 @@ async function savePostToBackend(wallet, entry) {
   try {
     const { data, error } = await supabase
       .from('posts')
-      .insert([{ owner: wallet || null, ...entry }]);
+      .insert([{ owner: wallet || null, ...entry }])
+      .select();
     if (error) throw error;
     return data[0];
   } catch (e) {
     console.warn('Supabase insert failed', e);
+    return null;
   }
 }
 
@@ -46,11 +48,11 @@ async function fetchBalance(wallet) {
   if (!wallet) return 0;
   try {
     const { data } = await supabase.from('balances').select('balance').eq('wallet', wallet).single();
-    if (data && data.balance != null) return data.balance;
+    return data?.balance ?? 0;
   } catch (e) {
     console.warn('Supabase fetch balance failed', e);
+    return 0;
   }
-  return 0;
 }
 
 async function addOrUpdateBalance(wallet, delta) {
@@ -88,7 +90,7 @@ export default function NooSpace() {
   const [text, setText] = useState('');
   const [entries, setEntries] = useState([]);
   const [usedToday, setUsedToday] = useState(0);
-  const [startTs, setStartTs] = useState(() => {
+  const [startTs] = useState(() => {
     const v = localStorage.getItem('noo_start');
     if (v) return parseInt(v, 10);
     const t = Date.now();
@@ -112,10 +114,8 @@ export default function NooSpace() {
         .catch(() => setUnclaimed(0));
 
       supabase.from('posts').select('reward').eq('owner', wallet)
-        .then(r => {
-          const total = (r.data || []).reduce((s, p) => s + (p.reward || 0), 0);
-          setFarmedTotal(total);
-        }).catch(() => {});
+        .then(r => setFarmedTotal((r.data || []).reduce((s, p) => s + (p.reward || 0), 0)))
+        .catch(() => {});
     }
   }, [wallet]);
 
@@ -126,10 +126,12 @@ export default function NooSpace() {
     const base = 5;
     const mult = mantra ? 1.4 : 1.0;
     const reward = Math.round(base * mult);
-    const entry = { id: Date.now(), text: text.trim(), reward, created_at: new Date().toISOString(), owner: wallet || null };
+    const entry = { text: text.trim(), reward, created_at: new Date().toISOString() };
 
-    await savePostToBackend(wallet, entry);
-    setEntries(prev => [entry, ...prev].slice(0, 200));
+    const saved = await savePostToBackend(wallet, entry);
+    if (!saved) return alert('Failed to save post.');
+
+    setEntries(prev => [saved, ...prev].slice(0, 200));
     setUsedToday(prev => { localStorage.setItem('noo_used', String(prev + 1)); return prev + 1; });
 
     if (wallet) {
@@ -146,7 +148,7 @@ export default function NooSpace() {
   async function harvestNow() {
     if (!wallet) return alert('Connect wallet to harvest your spores.');
     try {
-      const res = await fetch('/api/harvest', {  // ✅ hier der korrekte Pfad
+      const res = await fetch('/api/harvest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wallet }),
@@ -186,14 +188,17 @@ export default function NooSpace() {
       <main className="noo-main">
         <section className="ritual">
           <div className="orbs">
-            {Array.from({ length: DAILY_LIMIT }).map((_, i) => <div key={i} className={'orb ' + (i < usedToday ? 'filled' : 'empty')} />)}
+            {Array.from({ length: DAILY_LIMIT }).map((_, i) =>
+              <div key={i} className={'orb ' + (i < usedToday ? 'filled' : 'empty')} />)}
           </div>
 
           <div className="composer">
             <textarea value={text} onChange={e => setText(e.target.value.slice(0, MAX_CHARS))}
               placeholder={guest ? "Guest mode: post and see everything." : "Share a short resonant thought... (max 240 chars)"} rows={3} />
             <div className="composer-row">
-              <label className="mantra"><input type="checkbox" checked={mantra} onChange={() => setMantra(!mantra)} /> Speak with intent (mantra)</label>
+              <label className="mantra">
+                <input type="checkbox" checked={mantra} onChange={() => setMantra(!mantra)} /> Speak with intent (mantra)
+              </label>
               <div className="controls">
                 <div className="chars">{text.length}/{MAX_CHARS}</div>
                 <button className="post-btn" onClick={post} disabled={usedToday >= DAILY_LIMIT}>Post & Seed</button>
@@ -221,7 +226,9 @@ export default function NooSpace() {
                 <div className="entry-meta">
                   <div>+{e.reward} NOO</div>
                   <div className="resonate">
-                    <button onClick={async () => { if (supabase) { await supabase.from('posts').update({ resonates: (e.resonates || 0) + 1 }).eq('id', e.id) } }}>Resonate ({e.resonates || 0})</button>
+                    <button onClick={async () => {
+                      await supabase.from('posts').update({ resonates: (e.resonates || 0) + 1 }).eq('id', e.id);
+                    }}>Resonate ({e.resonates || 0})</button>
                     <button onClick={async () => {
                       if (!wallet) return alert('Connect to sacrifice.');
                       const ok = confirm('Sacrifice 20 NOO to highlight this post? (mock)');
