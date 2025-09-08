@@ -114,10 +114,10 @@ export default function NooSpace() {
       supabase.from('posts').select('reward').eq('owner', wallet)
         .then(r => {
           const total = (r.data || []).reduce((s, p) => s + (p.reward || 0), 0);
-          setFarmedTotal(total + (balance || 0));
+          setFarmedTotal(total);
         }).catch(() => {});
     }
-  }, [wallet, balance]);
+  }, [wallet]);
 
   async function post() {
     if (usedToday >= DAILY_LIMIT) return alert("You have used today's orbs.");
@@ -146,7 +146,7 @@ export default function NooSpace() {
   async function harvestNow() {
     if (!wallet) return alert('Connect wallet to harvest your spores.');
     try {
-      const res = await fetch('/functions/v1/harvest', {
+      const res = await fetch('/api/harvest', {  // ✅ hier der korrekte Pfad
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wallet }),
@@ -155,7 +155,7 @@ export default function NooSpace() {
       if (data?.ok) {
         setBalance(await fetchBalance(wallet));
         setUnclaimed(0);
-        setFarmedTotal(0); // reset after harvest
+        setFarmedTotal(0);
         alert(`Harvest successful! You gained ${data.harvested} NOO.`);
       } else alert('Harvest failed: ' + (data?.error || 'unknown'));
     } catch (e) {
@@ -246,5 +246,3 @@ export default function NooSpace() {
     </div>
   );
 }
-
-
