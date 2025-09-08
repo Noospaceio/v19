@@ -1,17 +1,17 @@
-import React, { useEffect, useState, useMemo } from 'react'
-import { supabase } from '../lib/supabaseClient'
-import { useWallet } from '@solana/wallet-adapter-react'
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
+import React, { useEffect, useState, useMemo } from 'react';
+import { supabase } from '../lib/supabaseClient';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 
-const DAILY_LIMIT = 3
-const MAX_CHARS = 240
-const AIRDROP_PER_USER = 1600
-const HARVEST_DAYS = 9
+const DAILY_LIMIT = 3;
+const MAX_CHARS = 240;
+const AIRDROP_PER_USER = 1600;
+const HARVEST_DAYS = 9;
 
 function formatDaysLeft(startTs) {
-  const now = Date.now()
-  const diff = Math.max(0, startTs + HARVEST_DAYS * 24 * 60 * 60 * 1000 - now)
-  return Math.ceil(diff / (24 * 60 * 60 * 1000))
+  const now = Date.now();
+  const diff = Math.max(0, startTs + HARVEST_DAYS * 24 * 60 * 60 * 1000 - now);
+  return Math.ceil(diff / (24 * 60 * 60 * 1000));
 }
 
 // --- Backend helpers ---
@@ -19,11 +19,11 @@ async function savePostToBackend(wallet, entry) {
   try {
     const { data, error } = await supabase
       .from('posts')
-      .insert([{ owner: wallet || null, ...entry }])
-    if (error) throw error
-    return data[0]
+      .insert([{ owner: wallet || null, ...entry }]);
+    if (error) throw error;
+    return data[0];
   } catch (e) {
-    console.warn('Supabase insert failed', e)
+    console.warn('Supabase insert failed', e);
   }
 }
 
@@ -33,117 +33,130 @@ async function fetchPostsFromBackend() {
       .from('posts')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(200)
-    if (error) throw error
-    return data
+      .limit(200);
+    if (error) throw error;
+    return data;
   } catch (e) {
-    console.warn('Supabase fetch failed', e)
-    return []
-  }
-}
-
-async function addOrUpdateBalance(wallet, delta) {
-  if (!wallet) return
-  try {
-    const { data: existing } = await supabase.from('balances').select('*').eq('wallet', wallet).single()
-    if (existing) {
-      const newBal = (existing.balance || 0) + delta
-      await supabase.from('balances').update({ balance: newBal }).eq('wallet', wallet)
-      return { wallet, balance: newBal }
-    } else {
-      await supabase.from('balances').insert({ wallet, balance: delta })
-      return { wallet, balance: delta }
-    }
-  } catch (e) {
-    console.warn('Supabase upsert balance failed', e)
+    console.warn('Supabase fetch failed', e);
+    return [];
   }
 }
 
 async function fetchBalance(wallet) {
-  if (!wallet) return 0
+  if (!wallet) return 0;
   try {
-    const { data } = await supabase.from('balances').select('balance').eq('wallet', wallet).single()
-    if (data && data.balance != null) return data.balance
+    const { data } = await supabase.from('balances').select('balance').eq('wallet', wallet).single();
+    if (data && data.balance != null) return data.balance;
   } catch (e) {
-    console.warn('Supabase fetch balance failed', e)
+    console.warn('Supabase fetch balance failed', e);
   }
-  return 0
+  return 0;
+}
+
+async function addOrUpdateBalance(wallet, delta) {
+  if (!wallet) return 0;
+  try {
+    const { data: existing } = await supabase.from('balances').select('balance').eq('wallet', wallet).single();
+    const newBalance = (existing?.balance || 0) + delta;
+    await supabase.from('balances').upsert({ wallet, balance: newBalance }, { onConflict: ['wallet'] });
+    return newBalance;
+  } catch (e) {
+    console.warn('Supabase upsert balance failed', e);
+    return 0;
+  }
+}
+
+async function addOrUpdateUnclaimed(wallet, delta) {
+  if (!wallet) return 0;
+  try {
+    const { data: existing } = await supabase.from('unclaimed').select('amount').eq('wallet', wallet).single();
+    const newAmount = (existing?.amount || 0) + delta;
+    await supabase.from('unclaimed').upsert({ wallet, amount: newAmount }, { onConflict: ['wallet'] });
+    return newAmount;
+  } catch (e) {
+    console.warn('Supabase upsert unclaimed failed', e);
+    return 0;
+  }
 }
 
 // --- React component ---
 export default function NooSpace() {
-  const { publicKey } = useWallet()
-  const wallet = publicKey ? publicKey.toBase58() : null
-  const guest = !wallet
+  const { publicKey } = useWallet();
+  const wallet = publicKey ? publicKey.toBase58() : null;
+  const guest = !wallet;
 
-  const [text, setText] = useState('')
-  const [entries, setEntries] = useState([])
-  const [usedToday, setUsedToday] = useState(0)
+  const [text, setText] = useState('');
+  const [entries, setEntries] = useState([]);
+  const [usedToday, setUsedToday] = useState(0);
   const [startTs, setStartTs] = useState(() => {
-    const v = localStorage.getItem('noo_start')
-    if (v) return parseInt(v, 10)
-    const t = Date.now()
-    localStorage.setItem('noo_start', String(t))
-    return t
-  })
-  const [unclaimed, setUnclaimed] = useState(0)
-  const [balance, setBalance] = useState(0)
-  const [mantra, setMantra] = useState(true)
-  const [farmedTotal, setFarmedTotal] = useState(0)
+    const v = localStorage.getItem('noo_start');
+    if (v) return parseInt(v, 10);
+    const t = Date.now();
+    localStorage.setItem('noo_start', String(t));
+    return t;
+  });
+  const [unclaimed, setUnclaimed] = useState(0);
+  const [balance, setBalance] = useState(0);
+  const [mantra, setMantra] = useState(true);
+  const [farmedTotal, setFarmedTotal] = useState(0);
 
   useEffect(() => {
-    fetchPostsFromBackend().then(setEntries)
-    setUsedToday(parseInt(localStorage.getItem('noo_used') || '0', 10))
+    fetchPostsFromBackend().then(setEntries);
+    setUsedToday(parseInt(localStorage.getItem('noo_used') || '0', 10));
+
     if (wallet) {
-      fetchBalance(wallet).then(setBalance)
-      // unclaimed seeds
+      fetchBalance(wallet).then(setBalance);
+
       supabase.from('unclaimed').select('amount').eq('wallet', wallet).single()
-        .then(res => { if (res?.data) setUnclaimed(res.data.amount || 0) })
-        .catch(() => setUnclaimed(0))
-      // farmedTotal
+        .then(res => setUnclaimed(res.data?.amount || 0))
+        .catch(() => setUnclaimed(0));
+
       supabase.from('posts').select('reward').eq('owner', wallet)
         .then(r => {
-          const total = (r.data || []).reduce((s, p) => s + (p.reward || 0), 0)
-          setFarmedTotal(total + (balance || 0))
-        }).catch(() => {})
+          const total = (r.data || []).reduce((s, p) => s + (p.reward || 0), 0);
+          setFarmedTotal(total + (balance || 0));
+        }).catch(() => {});
     }
-  }, [wallet, balance])
+  }, [wallet, balance]);
 
   async function post() {
-    if (usedToday >= DAILY_LIMIT) return alert("You have used today's orbs.")
-    if (!text.trim()) return
-    const base = 5
-    const mult = mantra ? 1.4 : 1.0
-    const reward = Math.round(base * mult)
-    const entry = { id: Date.now(), text: text.trim(), reward, created_at: new Date().toISOString() }
+    if (usedToday >= DAILY_LIMIT) return alert("You have used today's orbs.");
+    if (!text.trim()) return;
 
-    await savePostToBackend(wallet, entry)
-    setEntries(prev => [entry, ...prev].slice(0, 200))
-    setUsedToday(prev => { localStorage.setItem('noo_used', String(prev + 1)); return prev + 1 })
+    const base = 5;
+    const mult = mantra ? 1.4 : 1.0;
+    const reward = Math.round(base * mult);
+    const entry = { id: Date.now(), text: text.trim(), reward, created_at: new Date().toISOString(), owner: wallet || null };
+
+    await savePostToBackend(wallet, entry);
+    setEntries(prev => [entry, ...prev].slice(0, 200));
+    setUsedToday(prev => { localStorage.setItem('noo_used', String(prev + 1)); return prev + 1; });
 
     if (wallet) {
-      await supabase.from('unclaimed').upsert({ wallet, amount: reward }, { onConflict: ['wallet'] }).catch(() => {})
-      setUnclaimed(prev => prev + reward)
-      setFarmedTotal(prev => prev + reward)
+      const newUnclaimed = await addOrUpdateUnclaimed(wallet, reward);
+      setUnclaimed(newUnclaimed);
+      const newBalance = await addOrUpdateBalance(wallet, reward);
+      setBalance(newBalance);
+      setFarmedTotal(prev => prev + reward);
     }
 
-    setText('')
+    setText('');
   }
 
   async function harvestNowMock() {
-    if (!wallet) return alert('Connect wallet to harvest your spores.')
+    if (!wallet) return alert('Connect wallet to harvest your spores.');
     try {
-      const res = await fetch('/api/harvest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wallet }) })
-      const data = await res.json()
+      const res = await fetch('/api/harvest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wallet }) });
+      const data = await res.json();
       if (data?.ok) {
-        setBalance(await fetchBalance(wallet))
-        setUnclaimed(0)
-        alert('Harvest processed (mock).')
-      } else alert('Harvest failed: ' + (data?.error || 'unknown'))
-    } catch (e) { alert('Harvest request failed (network).') }
+        setBalance(await fetchBalance(wallet));
+        setUnclaimed(0);
+        alert('Harvest processed (mock).');
+      } else alert('Harvest failed: ' + (data?.error || 'unknown'));
+    } catch (e) { alert('Harvest request failed (network).'); }
   }
 
-  const daysLeft = useMemo(() => formatDaysLeft(startTs), [startTs, entries])
+  const daysLeft = useMemo(() => formatDaysLeft(startTs), [startTs, entries]);
 
   return (
     <div className="noo-wrap">
@@ -170,7 +183,8 @@ export default function NooSpace() {
           </div>
 
           <div className="composer">
-            <textarea value={text} onChange={e => setText(e.target.value.slice(0, MAX_CHARS))} placeholder={guest ? "Guest mode: post and see everything." : "Share a short resonant thought... (max 240 chars)"} rows={3} />
+            <textarea value={text} onChange={e => setText(e.target.value.slice(0, MAX_CHARS))}
+              placeholder={guest ? "Guest mode: post and see everything." : "Share a short resonant thought... (max 240 chars)"} rows={3} />
             <div className="composer-row">
               <label className="mantra"><input type="checkbox" checked={mantra} onChange={() => setMantra(!mantra)} /> Speak with intent (mantra)</label>
               <div className="controls">
@@ -202,12 +216,12 @@ export default function NooSpace() {
                   <div className="resonate">
                     <button onClick={async () => { if (supabase) { await supabase.from('posts').update({ resonates: (e.resonates || 0) + 1 }).eq('id', e.id) } }}>Resonate ({e.resonates || 0})</button>
                     <button onClick={async () => {
-                      if (!wallet) return alert('Connect to sacrifice.')
-                      const ok = confirm('Sacrifice 20 NOO to highlight this post? (mock)')
-                      if (!ok) return
-                      await addOrUpdateBalance(wallet, -20)
-                      setBalance(await fetchBalance(wallet))
-                      setEntries(entries.map(x => x.id === e.id ? { ...x, highlighted: true } : x))
+                      if (!wallet) return alert('Connect to sacrifice.');
+                      const ok = confirm('Sacrifice 20 NOO to highlight this post? (mock)');
+                      if (!ok) return;
+                      const newBalance = await addOrUpdateBalance(wallet, -20);
+                      setBalance(newBalance);
+                      setEntries(entries.map(x => x.id === e.id ? { ...x, highlighted: true } : x));
                     }} className="burn">Sacrifice 20 NOO</button>
                   </div>
                   <time>{new Date(e.created_at).toLocaleString()}</time>
@@ -223,5 +237,6 @@ export default function NooSpace() {
         <div>Seeds, ritual, and resonance • Harvest cycles every {HARVEST_DAYS} days</div>
       </footer>
     </div>
-  )
+  );
 }
+
