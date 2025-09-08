@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
@@ -7,12 +7,6 @@ const DAILY_LIMIT = 3;
 const MAX_CHARS = 240;
 const AIRDROP_PER_USER = 1600;
 const HARVEST_DAYS = 9;
-
-function formatDaysLeft(startTs) {
-  const now = Date.now();
-  const diff = Math.max(0, startTs + HARVEST_DAYS * 24 * 60 * 60 * 1000 - now);
-  return Math.ceil(diff / (24 * 60 * 60 * 1000));
-}
 
 // --- Backend helpers ---
 async function savePostToBackend(wallet, entry) {
@@ -116,33 +110,55 @@ export default function NooSpace() {
   const [text, setText] = useState('');
   const [entries, setEntries] = useState([]);
   const [usedToday, setUsedToday] = useState(0);
-  const [startTs] = useState(() => {
-    const v = localStorage.getItem('noo_start');
-    if (v) return parseInt(v, 10);
-    const t = Date.now();
-    localStorage.setItem('noo_start', String(t));
-    return t;
-  });
+  const [startTs, setStartTs] = useState(Date.now());
   const [unclaimed, setUnclaimed] = useState(0);
   const [balance, setBalance] = useState(0);
   const [mantra, setMantra] = useState(true);
   const [farmedTotal, setFarmedTotal] = useState(0);
+  const [daysLeft, setDaysLeft] = useState(HARVEST_DAYS);
 
+  // Fetch posts + balances + daily usage + unclaimed + wallet start_ts
   useEffect(() => {
     fetchPostsFromBackend().then(setEntries);
+
     if (wallet) {
       fetchUsedToday(wallet).then(setUsedToday);
       fetchBalance(wallet).then(setBalance);
+
       supabase.from('unclaimed').select('amount').eq('wallet', wallet).single()
         .then(res => setUnclaimed(res.data?.amount || 0))
         .catch(() => setUnclaimed(0));
+
       supabase.from('posts').select('reward').eq('owner', wallet)
         .then(r => setFarmedTotal((r.data || []).reduce((s, p) => s + (p.reward || 0), 0)))
         .catch(() => {});
+
+      // Wallet start_ts
+      supabase.from('wallets').select('start_ts').eq('wallet', wallet).single()
+        .then(res => {
+          if (res.data?.start_ts) setStartTs(res.data.start_ts);
+          else {
+            const ts = Date.now();
+            supabase.from('wallets').insert({ wallet, start_ts: ts }).then(() => setStartTs(ts));
+          }
+        })
+        .catch(() => setStartTs(Date.now()));
     } else {
       setUsedToday(parseInt(localStorage.getItem('noo_used') || '0', 10));
     }
   }, [wallet]);
+
+  // Berechne Tage bis Harvest
+  useEffect(() => {
+    const updateDaysLeft = () => {
+      const now = Date.now();
+      const diff = Math.max(0, startTs + HARVEST_DAYS * 24 * 60 * 60 * 1000 - now);
+      setDaysLeft(Math.ceil(diff / (24 * 60 * 60 * 1000)));
+    };
+    updateDaysLeft();
+    const interval = setInterval(updateDaysLeft, 60_000);
+    return () => clearInterval(interval);
+  }, [startTs]);
 
   async function post() {
     if (!guest && usedToday >= DAILY_LIMIT) return alert("You have used today's orbs.");
@@ -175,6 +191,8 @@ export default function NooSpace() {
 
   async function harvestNow() {
     if (!wallet) return alert('Connect wallet to harvest your spores.');
+    if (daysLeft > 0) return alert(`Harvest not ready. ${daysLeft} days left.`);
+
     try {
       const res = await fetch('/api/harvest', {
         method: 'POST',
@@ -192,8 +210,6 @@ export default function NooSpace() {
       alert('Harvest request failed (network).');
     }
   }
-
-  const daysLeft = useMemo(() => formatDaysLeft(startTs), [startTs, entries]);
 
   return (
     <div className="noo-wrap">
@@ -237,7 +253,7 @@ export default function NooSpace() {
               <div>Your spores are germinating. Harvest in <strong>{daysLeft}</strong> dawns.</div>
               <div>Unclaimed seeds: <strong>{unclaimed}</strong></div>
               <div className="harvest-actions">
-                <button onClick={harvestNow} disabled={!wallet}>Request Harvest</button>
+                <button onClick={harvestNow} disabled={!wallet || daysLeft > 0}>Request Harvest</button>
               </div>
               <div className="airdrop-note">Genesis spore balance (per user): {AIRDROP_PER_USER} NOO</div>
             </div>
@@ -281,3 +297,4 @@ export default function NooSpace() {
     </div>
   );
 }
+
